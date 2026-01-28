@@ -3,7 +3,6 @@ import { Device } from "@twilio/voice-sdk";
 
 const TOKEN_URL =
   "https://us-central1-vertexifycx-orbit.cloudfunctions.net/getVoiceToken";
-
 const CALL_LOG_FUNCTION_URL =
   "https://us-central1-vertexifycx-orbit.cloudfunctions.net/createCallLog";
 
@@ -26,12 +25,24 @@ export default function InboundAgent() {
     console.log("ORG ID:", orgIdRef.current);
   }, []);
 
-  /* ---------------- MUTED AUTOPLAY HACK ---------------- */
+  /* ---------------- UNLOCK AUDIO ON USER INTERACTION ---------------- */
   useEffect(() => {
-    // Play a silent muted audio to allow autoplay for Twilio ringing
-    const silentAudio = new Audio();
-    silentAudio.muted = true;
-    silentAudio.play().catch(() => {});
+    const unlockAudio = () => {
+      const silent = new Audio();
+      silent.muted = true;
+      silent.play().catch(() => {});
+      window.removeEventListener("mousemove", unlockAudio);
+      window.removeEventListener("touchstart", unlockAudio);
+      console.log("Audio unlocked for first call ✅");
+    };
+
+    window.addEventListener("mousemove", unlockAudio);
+    window.addEventListener("touchstart", unlockAudio);
+
+    return () => {
+      window.removeEventListener("mousemove", unlockAudio);
+      window.removeEventListener("touchstart", unlockAudio);
+    };
   }, []);
 
   /* ---------------- TIMER ---------------- */
@@ -57,10 +68,11 @@ export default function InboundAgent() {
         to: from,
         status,
         reason,
-        direction: "inbound",
+        direction: "inbound", // ✅ FORCE inbound
         startedAt: start ? new Date(start).toISOString() : null,
         endedAt: end ? new Date(end).toISOString() : null,
-        durationSeconds: start && end ? Math.floor((end - start) / 1000) : 0,
+        durationSeconds:
+          start && end ? Math.floor((end - start) / 1000) : 0,
         orgId: orgIdRef.current,
       }),
     });
@@ -73,9 +85,8 @@ export default function InboundAgent() {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach((t) => t.stop());
 
-        const audioEl = new Audio();
-        audioEl.autoplay = true;
-        audioRef.current = audioEl;
+        audioRef.current = new Audio();
+        audioRef.current.autoplay = true;
 
         const res = await fetch(`${TOKEN_URL}?identity=agent`);
         const { token } = await res.json();
@@ -169,7 +180,9 @@ export default function InboundAgent() {
           </div>
         )}
 
-        {startedAtRef.current && <p style={styles.timer}>⏱ {duration}s</p>}
+        {startedAtRef.current && (
+          <p style={styles.timer}>⏱ {duration}s</p>
+        )}
       </div>
     </div>
   );
