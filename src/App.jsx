@@ -7,17 +7,29 @@ const TOKEN_URL =
 export default function InboundAgent() {
   const deviceRef = useRef(null);
   const callRef = useRef(null);
-  const [status, setStatus] = useState("Initializing phone...");
+  const [status, setStatus] = useState("Requesting microphone permission...");
   const [incoming, setIncoming] = useState(false);
 
-  const initDevice = async () => {
+  const requestAudioPermission = async () => {
     try {
-      setStatus("Requesting microphone permission...");
-
-      // Request mic immediately
+      // Request microphone access
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Stop tracks after permission granted
       stream.getTracks().forEach((t) => t.stop());
+      setStatus("✅ Microphone permission granted");
+      return true;
+    } catch (err) {
+      console.error("Mic permission denied", err);
+      setStatus("❌ Microphone permission denied");
+      return false;
+    }
+  };
 
+  const initDevice = async () => {
+    const micOk = await requestAudioPermission();
+    if (!micOk) return;
+
+    try {
       setStatus("Fetching Twilio token...");
       const res = await fetch(`${TOKEN_URL}?identity=agent`);
       const { token } = await res.json();
@@ -56,6 +68,7 @@ export default function InboundAgent() {
     }
   };
 
+  // Initialize device immediately on component mount
   useEffect(() => {
     initDevice();
   }, []);
@@ -97,6 +110,7 @@ export default function InboundAgent() {
   );
 }
 
+// ---- Styles ----
 const styles = {
   container: {
     height: "100vh",
