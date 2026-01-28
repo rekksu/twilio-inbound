@@ -9,12 +9,16 @@ export default function InboundAgent() {
   const callRef = useRef(null);
   const [status, setStatus] = useState("Initializing phone...");
   const [incoming, setIncoming] = useState(false);
-  const [audioReady, setAudioReady] = useState(false);
 
-  // 1️⃣ Create device immediately
-  const createDevice = async () => {
+  const initDevice = async () => {
     try {
-      setStatus("Fetching token...");
+      setStatus("Requesting microphone permission...");
+
+      // Request mic immediately
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+
+      setStatus("Fetching Twilio token...");
       const res = await fetch(`${TOKEN_URL}?identity=agent`);
       const { token } = await res.json();
 
@@ -43,40 +47,17 @@ export default function InboundAgent() {
         });
       });
 
-      setStatus("✅ Device created, waiting for audio...");
+      setStatus("✅ Phone ready, registering...");
+      await device.register();
+      setStatus("✅ Phone ready, waiting for calls...");
     } catch (err) {
       console.error(err);
-      setStatus("❌ Failed to create device");
-    }
-  };
-
-  // 2️⃣ Resume AudioContext on first gesture
-  const unlockAudio = async () => {
-    if (!audioReady) {
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      await audioContext.resume();
-      setAudioReady(true);
-      setStatus("✅ Phone ready, waiting for calls...");
-
-      // Register the device now that audio is ready
-      if (deviceRef.current) {
-        await deviceRef.current.register();
-      }
+      setStatus("❌ Failed to initialize phone: " + err.message);
     }
   };
 
   useEffect(() => {
-    createDevice();
-
-    // Listen for first user gesture to unlock audio
-    const events = ["click", "touchstart", "keydown", "mousemove"];
-    const gestureHandler = () => unlockAudio();
-
-    events.forEach((e) => window.addEventListener(e, gestureHandler, { once: true }));
-
-    return () => {
-      events.forEach((e) => window.removeEventListener(e, gestureHandler));
-    };
+    initDevice();
   }, []);
 
   const acceptCall = () => {
