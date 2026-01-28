@@ -7,45 +7,29 @@ const TOKEN_URL =
 export default function InboundAgent() {
   const deviceRef = useRef(null);
   const callRef = useRef(null);
-
-  const [status, setStatus] = useState("Initializing phone...");
+  const [status, setStatus] = useState("Click Start Phone to initialize");
   const [incoming, setIncoming] = useState(false);
-  const [audioEnabled, setAudioEnabled] = useState(false);
-
-  // 🔁 Auto-initialize device on page load
-  useEffect(() => {
-    startDevice();
-
-    return () => {
-      if (deviceRef.current) {
-        deviceRef.current.destroy();
-        deviceRef.current = null;
-      }
-    };
-  }, []);
 
   const startDevice = async () => {
-    if (deviceRef.current) return;
-
     try {
+      setStatus("Initializing...");
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      await audioContext.resume();
+
       const res = await fetch(`${TOKEN_URL}?identity=agent`);
       const { token } = await res.json();
 
-      const device = new Device(token, {
-        enableRingingState: true,
-        closeProtection: true,
-      });
-
+      const device = new Device(token, { enableRingingState: true, closeProtection: true });
       deviceRef.current = device;
-
-      device.on("registered", () => {
-        setStatus("✅ Phone ready (waiting for calls)");
-      });
 
       device.on("error", (err) => {
         console.error("Device error:", err);
         setStatus("❌ Device error: " + err.message);
       });
+
+      setStatus("Registering device...");
+      await device.register();
+      setStatus("✅ Device ready");
 
       device.on("incoming", (call) => {
         callRef.current = call;
@@ -58,37 +42,18 @@ export default function InboundAgent() {
         });
 
         call.on("error", (err) => {
-          console.error("Call error:", err);
           setIncoming(false);
+          console.error("Call error:", err);
           setStatus("❌ Call error");
         });
       });
-
-      await device.register();
     } catch (err) {
       console.error(err);
-      setStatus("❌ Failed to initialize phone");
-    }
-  };
-
-  // 🔊 One-time user interaction to unlock audio
-  const enableAudio = async () => {
-    try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      await ctx.resume();
-      setAudioEnabled(true);
-      setStatus("🔊 Audio enabled");
-    } catch {
-      setStatus("❌ Failed to enable audio");
+      setStatus("❌ Failed to initialize device");
     }
   };
 
   const acceptCall = () => {
-    if (!audioEnabled) {
-      setStatus("⚠️ Enable audio first");
-      return;
-    }
-
     if (callRef.current) {
       callRef.current.accept();
       setIncoming(false);
@@ -111,11 +76,9 @@ export default function InboundAgent() {
 
         <div style={styles.status}>{status}</div>
 
-        {!audioEnabled && (
-          <button style={styles.startButton} onClick={enableAudio}>
-            Enable Audio
-          </button>
-        )}
+        <button style={styles.startButton} onClick={startDevice}>
+          Start Phone
+        </button>
 
         {incoming && (
           <div style={styles.incomingContainer}>
@@ -143,15 +106,15 @@ const styles = {
     background: "#f0f2f5",
   },
   card: {
-    width: 360,
-    minHeight: 260,
+    width: 350,
+    minHeight: 250,
     padding: 30,
     borderRadius: 12,
     boxShadow: "0 6px 20px rgba(0,0,0,0.15)",
     display: "flex",
     flexDirection: "column",
-    justifyContent: "center",
-    alignItems: "center",
+    justifyContent: "center", // ⚡ Vertically center all content
+    alignItems: "center",     // ⚡ Horizontally center all content
     background: "#fff",
     textAlign: "center",
   },
@@ -163,6 +126,7 @@ const styles = {
     borderRadius: 8,
     background: "#e0e0e0",
     fontWeight: "bold",
+    textAlign: "center",
     width: "100%",
     marginBottom: 15,
   },
@@ -178,8 +142,10 @@ const styles = {
   },
   incomingContainer: {
     display: "flex",
+    justifyContent: "center",
     gap: "15px",
     marginTop: 10,
+    flexWrap: "wrap",
   },
   acceptButton: {
     background: "#2e7d32",
