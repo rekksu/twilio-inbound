@@ -31,57 +31,62 @@ export default function InboundAgent() {
     let timer;
     if (startedAtRef.current) {
       timer = setInterval(() => {
-        setDuration(
-          Math.floor((Date.now() - startedAtRef.current) / 1000)
-        );
+        setDuration(Math.floor((Date.now() - startedAtRef.current) / 1000));
       }, 1000);
     }
     return () => clearInterval(timer);
   }, [startedAtRef.current]);
 
   /* ---------------- SAVE CALL ---------------- */
- const saveCall = async (status, reason, from, start, end) => {
-  if (savedRef.current) return;
-  savedRef.current = true;
+  const saveCall = async (status, reason, from, start, end) => {
+    if (savedRef.current) return;
+    savedRef.current = true;
 
-  await fetch(CALL_LOG_FUNCTION_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      to: from,
-      status,
-      reason,
-      direction: "inbound", // ✅ FORCE inbound
-      startedAt: start ? new Date(start).toISOString() : null,
-      endedAt: end ? new Date(end).toISOString() : null,
-      durationSeconds:
-        start && end ? Math.floor((end - start) / 1000) : 0,
-      orgId: orgIdRef.current,
-    }),
-  });
-};
+    await fetch(CALL_LOG_FUNCTION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: from,
+        status,
+        reason,
+        direction: "inbound",
+        startedAt: start ? new Date(start).toISOString() : null,
+        endedAt: end ? new Date(end).toISOString() : null,
+        durationSeconds:
+          start && end ? Math.floor((end - start) / 1000) : 0,
+        orgId: orgIdRef.current,
+      }),
+    });
+  };
 
   /* ---------------- INIT DEVICE ---------------- */
   useEffect(() => {
     const init = async () => {
       try {
+        // Request mic first
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach((t) => t.stop());
 
-        audioRef.current = new Audio();
-        audioRef.current.autoplay = true;
+        // Create Audio element BEFORE device creation
+        const audioEl = new Audio();
+        audioEl.autoplay = true;
+        audioRef.current = audioEl;
 
+        // Fetch Twilio token
         const res = await fetch(`${TOKEN_URL}?identity=agent`);
         const { token } = await res.json();
 
+        // Create device
         const device = new Device(token, {
           enableRingingState: true,
           closeProtection: true,
         });
-
         deviceRef.current = device;
+
+        // Attach audio BEFORE registering device
         device.audio.incoming(audioRef.current);
 
+        // Device event listeners
         device.on("incoming", (call) => {
           savedRef.current = false;
           callRef.current = call;
@@ -112,6 +117,12 @@ export default function InboundAgent() {
           });
         });
 
+        device.on("error", (err) => {
+          console.error(err);
+          setStatus("❌ Init failed: " + err.message);
+        });
+
+        // Register device
         await device.register();
         setStatus("✅ Ready for inbound calls");
       } catch (err) {
