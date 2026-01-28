@@ -17,32 +17,12 @@ export default function InboundAgent() {
   const [status, setStatus] = useState("Initializing…");
   const [incoming, setIncoming] = useState(false);
   const [duration, setDuration] = useState(0);
+  const [audioEnabled, setAudioEnabled] = useState(false); // <-- new state
 
   /* ---------------- ORG ID ---------------- */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     orgIdRef.current = params.get("orgId");
-    console.log("ORG ID:", orgIdRef.current);
-  }, []);
-
-  /* ---------------- UNLOCK AUDIO ON USER INTERACTION ---------------- */
-  useEffect(() => {
-    const unlockAudio = () => {
-      const silent = new Audio();
-      silent.muted = true;
-      silent.play().catch(() => {});
-      window.removeEventListener("mousemove", unlockAudio);
-      window.removeEventListener("touchstart", unlockAudio);
-      console.log("Audio unlocked for first call ✅");
-    };
-
-    window.addEventListener("mousemove", unlockAudio);
-    window.addEventListener("touchstart", unlockAudio);
-
-    return () => {
-      window.removeEventListener("mousemove", unlockAudio);
-      window.removeEventListener("touchstart", unlockAudio);
-    };
   }, []);
 
   /* ---------------- TIMER ---------------- */
@@ -68,7 +48,7 @@ export default function InboundAgent() {
         to: from,
         status,
         reason,
-        direction: "inbound", // ✅ FORCE inbound
+        direction: "inbound",
         startedAt: start ? new Date(start).toISOString() : null,
         endedAt: end ? new Date(end).toISOString() : null,
         durationSeconds:
@@ -79,66 +59,62 @@ export default function InboundAgent() {
   };
 
   /* ---------------- INIT DEVICE ---------------- */
-  useEffect(() => {
-    const init = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((t) => t.stop());
+  const initDevice = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());
 
-        audioRef.current = new Audio();
-        audioRef.current.autoplay = true;
+      audioRef.current = new Audio();
+      audioRef.current.autoplay = true;
 
-        const res = await fetch(`${TOKEN_URL}?identity=agent`);
-        const { token } = await res.json();
+      const res = await fetch(`${TOKEN_URL}?identity=agent`);
+      const { token } = await res.json();
 
-        const device = new Device(token, {
-          enableRingingState: true,
-          closeProtection: true,
+      const device = new Device(token, {
+        enableRingingState: true,
+        closeProtection: true,
+      });
+
+      deviceRef.current = device;
+      device.audio.incoming(audioRef.current);
+
+      device.on("incoming", (call) => {
+        savedRef.current = false;
+        callRef.current = call;
+        setIncoming(true);
+        setStatus("📞 Incoming call");
+
+        call.on("disconnect", () => {
+          saveCall(
+            "ended",
+            null,
+            call.parameters.From,
+            startedAtRef.current,
+            Date.now()
+          );
+          startedAtRef.current = null;
+          setIncoming(false);
+          setStatus("📴 Call ended");
         });
 
-        deviceRef.current = device;
-        device.audio.incoming(audioRef.current);
-
-        device.on("incoming", (call) => {
-          savedRef.current = false;
-          callRef.current = call;
-          setIncoming(true);
-          setStatus("📞 Incoming call");
-
-          call.on("disconnect", () => {
-            saveCall(
-              "ended",
-              null,
-              call.parameters.From,
-              startedAtRef.current,
-              Date.now()
-            );
-            startedAtRef.current = null;
-            setIncoming(false);
-            setStatus("📴 Call ended");
-          });
-
-          call.on("error", (err) => {
-            saveCall(
-              "failed",
-              err.message,
-              call.parameters.From,
-              startedAtRef.current,
-              Date.now()
-            );
-          });
+        call.on("error", (err) => {
+          saveCall(
+            "failed",
+            err.message,
+            call.parameters.From,
+            startedAtRef.current,
+            Date.now()
+          );
         });
+      });
 
-        await device.register();
-        setStatus("✅ Ready for inbound calls");
-      } catch (err) {
-        console.error(err);
-        setStatus("❌ Init failed");
-      }
-    };
-
-    init();
-  }, []);
+      await device.register();
+      setStatus("✅ Ready for inbound calls");
+    } catch (err) {
+      console.error(err);
+      setStatus("❌ Init failed");
+    }
+  };
 
   /* ---------------- ACTIONS ---------------- */
   const acceptCall = () => {
@@ -161,9 +137,25 @@ export default function InboundAgent() {
     setStatus("❌ Rejected");
   };
 
+  const enableAudio = () => {
+    setAudioEnabled(true);
+    initDevice();
+  };
+
   /* ---------------- UI ---------------- */
   return (
     <div style={styles.container}>
+      {!audioEnabled && (
+        <div style={styles.modal}>
+          <div style={styles.modalContent}>
+            <p>🎧 Please enable audio to receive calls</p>
+            <button style={styles.enableButton} onClick={enableAudio}>
+              Enable Audio
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={styles.card}>
         <h2 style={styles.title}>📞 Inbound Agent</h2>
 
@@ -205,6 +197,7 @@ const styles = {
     background: "#fff",
     boxShadow: "0 8px 24px rgba(0,0,0,.15)",
     textAlign: "center",
+    zIndex: 1,
   },
   title: { marginBottom: 12 },
   status: {
@@ -240,5 +233,30 @@ const styles = {
   timer: {
     marginTop: 12,
     fontWeight: "bold",
+  },
+  modal: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.4)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 10,
+  },
+  modalContent: {
+    background: "#fff",
+    padding: 30,
+    borderRadius: 14,
+    textAlign: "center",
+  },
+  enableButton: {
+    marginTop: 15,
+    padding: "10px 20px",
+    borderRadius: 8,
+    border: "none",
+    fontWeight: "bold",
+    background: "#1976d2",
+    color: "#fff",
+    cursor: "pointer",
   },
 };
