@@ -7,26 +7,32 @@ const TOKEN_URL =
 export default function InboundAgent() {
   const deviceRef = useRef(null);
   const callRef = useRef(null);
-  const [status, setStatus] = useState("Requesting microphone permission...");
+  const audioRef = useRef(null);
+  const [status, setStatus] = useState("Requesting microphone...");
   const [incoming, setIncoming] = useState(false);
 
-  const requestAudioPermission = async () => {
+  // Request mic and create audio element
+  const initAudio = async () => {
     try {
-      // Request microphone access
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Stop tracks after permission granted
       stream.getTracks().forEach((t) => t.stop());
-      setStatus("✅ Microphone permission granted");
+
+      // Create an <audio> element for incoming audio
+      const audioEl = new Audio();
+      audioEl.autoplay = true;
+      audioRef.current = audioEl;
+
+      setStatus("✅ Microphone ready");
       return true;
     } catch (err) {
-      console.error("Mic permission denied", err);
-      setStatus("❌ Microphone permission denied");
+      console.error(err);
+      setStatus("❌ Mic permission denied");
       return false;
     }
   };
 
   const initDevice = async () => {
-    const micOk = await requestAudioPermission();
+    const micOk = await initAudio();
     if (!micOk) return;
 
     try {
@@ -36,6 +42,11 @@ export default function InboundAgent() {
 
       const device = new Device(token, { enableRingingState: true, closeProtection: true });
       deviceRef.current = device;
+
+      // Attach audio for incoming call (includes ringing)
+      if (audioRef.current) {
+        device.audio.incoming(audioRef.current);
+      }
 
       device.on("error", (err) => {
         console.error("Device error:", err);
@@ -59,7 +70,7 @@ export default function InboundAgent() {
         });
       });
 
-      setStatus("✅ Phone ready, registering...");
+      setStatus("✅ Registering device...");
       await device.register();
       setStatus("✅ Phone ready, waiting for calls...");
     } catch (err) {
@@ -68,7 +79,6 @@ export default function InboundAgent() {
     }
   };
 
-  // Initialize device immediately on component mount
   useEffect(() => {
     initDevice();
   }, []);
@@ -110,7 +120,6 @@ export default function InboundAgent() {
   );
 }
 
-// ---- Styles ----
 const styles = {
   container: {
     height: "100vh",
