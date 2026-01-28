@@ -7,8 +7,9 @@ const TOKEN_URL =
 export default function InboundAgent() {
   const deviceRef = useRef(null);
   const callRef = useRef(null);
-  const [status, setStatus] = useState("Initializing phone..."); // Start with initialization
+  const [status, setStatus] = useState("Move your mouse to initialize phone...");
   const [incoming, setIncoming] = useState(false);
+  const [initialized, setInitialized] = useState(false); // to prevent multiple inits
 
   const startDevice = async () => {
     try {
@@ -69,10 +70,20 @@ export default function InboundAgent() {
     }
   };
 
-  // ⚡ Automatically start phone on component mount
+  // ⚡ Initialize on first mouse move
   useEffect(() => {
-    startDevice();
-  }, []);
+    const handleMouseMove = () => {
+      if (!initialized) {
+        startDevice();
+        setInitialized(true);
+      }
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+    };
+  }, [initialized]);
 
   return (
     <div style={styles.container}>
