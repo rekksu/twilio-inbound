@@ -3,6 +3,8 @@ import { Device } from "@twilio/voice-sdk";
 
 const TOKEN_URL =
   "https://us-central1-vertexifycx-orbit.cloudfunctions.net/getVoiceToken";
+const CALL_LOG_FUNCTION_URL =
+  "https://us-central1-vertexifycx-orbit.cloudfunctions.net/createCallLog";
 
 export default function InboundAgent() {
   const deviceRef = useRef(null);
@@ -11,13 +13,32 @@ export default function InboundAgent() {
   const [status, setStatus] = useState("Requesting microphone...");
   const [incoming, setIncoming] = useState(false);
 
+  // Save call to backend
+  const saveCallLog = async (statusStr, reason, fromNumber, duration, start, end) => {
+    try {
+      await fetch(CALL_LOG_FUNCTION_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: fromNumber,
+          status: statusStr,          // "connected", "ended", "failed"
+          reason: reason || null,
+          startedAt: start ? new Date(start).toISOString() : null,
+          endedAt: end ? new Date(end).toISOString() : null,
+          durationSeconds: duration || 0,
+        }),
+      });
+    } catch (err) {
+      console.error("Failed to save call log:", err);
+    }
+  };
+
   // Request mic and create audio element
   const initAudio = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((t) => t.stop());
 
-      // Create an <audio> element for incoming audio
       const audioEl = new Audio();
       audioEl.autoplay = true;
       audioRef.current = audioEl;
@@ -43,9 +64,8 @@ export default function InboundAgent() {
       const device = new Device(token, { enableRingingState: true, closeProtection: true });
       deviceRef.current = device;
 
-      // Attach audio for incoming call (includes ringing)
       if (audioRef.current) {
-        device.audio.incoming(audioRef.current);
+        device.audio.incoming(audioRef.current); // attach audio for call
       }
 
       device.on("error", (err) => {
@@ -58,14 +78,26 @@ export default function InboundAgent() {
         setIncoming(true);
         setStatus("📞 Incoming call...");
 
+        const startTime = Date.now();
+
+        call.on("accept", () => {
+          setStatus("✅ Call connected");
+        });
+
         call.on("disconnect", () => {
+          const endTime = Date.now();
+          const duration = Math.floor((endTime - startTime) / 1000);
+          saveCallLog("ended", null, call.parameters.From, duration, startTime, endTime);
           setIncoming(false);
           setStatus("📴 Call ended");
         });
 
         call.on("error", (err) => {
-          setIncoming(false);
+          const endTime = Date.now();
+          const duration = Math.floor((endTime - startTime) / 1000);
+          saveCallLog("failed", err.message, call.parameters.From, duration, startTime, endTime);
           console.error("Call error:", err);
+          setIncoming(false);
           setStatus("❌ Call error");
         });
       });
@@ -93,9 +125,13 @@ export default function InboundAgent() {
 
   const rejectCall = () => {
     if (callRef.current) {
+      const startTime = Date.now();
       callRef.current.reject();
       setIncoming(false);
       setStatus("❌ Call rejected");
+
+      // Log rejected call
+      saveCallLog("rejected", null, callRef.current.parameters.From, 0, startTime, startTime);
     }
   };
 
