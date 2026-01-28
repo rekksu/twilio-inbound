@@ -3,6 +3,7 @@ import { Device } from "@twilio/voice-sdk";
 
 const TOKEN_URL =
   "https://us-central1-vertexifycx-orbit.cloudfunctions.net/getVoiceToken";
+
 const CALL_LOG_FUNCTION_URL =
   "https://us-central1-vertexifycx-orbit.cloudfunctions.net/createCallLog";
 
@@ -10,116 +11,127 @@ export default function InboundAgent() {
   const deviceRef = useRef(null);
   const callRef = useRef(null);
   const audioRef = useRef(null);
-  const timerRef = useRef(null);
   const startedAtRef = useRef(null);
-  const hasSavedRef = useRef(false);
-  const orgIdRef = useRef(null); // ✅ FIX
+  const savedRef = useRef(false);
+  const orgIdRef = useRef(null);
 
   const [status, setStatus] = useState("Initializing…");
   const [incoming, setIncoming] = useState(false);
   const [duration, setDuration] = useState(0);
 
-  /* ---------- READ ORG ID ---------- */
+  /* ---------------- ORG ID ---------------- */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     orgIdRef.current = params.get("orgId");
     console.log("ORG ID:", orgIdRef.current);
   }, []);
 
-  /* ---------- AUDIO ---------- */
-  const initAudio = async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach((t) => t.stop());
+  /* ---------------- TIMER ---------------- */
+  useEffect(() => {
+    let timer;
+    if (startedAtRef.current) {
+      timer = setInterval(() => {
+        setDuration(
+          Math.floor((Date.now() - startedAtRef.current) / 1000)
+        );
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [startedAtRef.current]);
 
-    const audio = new Audio();
-    audio.autoplay = true;
-    audioRef.current = audio;
-  };
-
-  /* ---------- TIMER ---------- */
-  const startTimer = () => {
-    timerRef.current = setInterval(() => {
-      setDuration(Math.floor((Date.now() - startedAtRef.current) / 1000));
-    }, 1000);
-  };
-
-  const stopTimer = () => {
-    clearInterval(timerRef.current);
-  };
-
-  /* ---------- SAVE CALL ---------- */
-  const saveCallLog = async (statusStr, reason, from, start, end) => {
-    if (hasSavedRef.current) return;
-    hasSavedRef.current = true;
+  /* ---------------- SAVE CALL ---------------- */
+  const saveCall = async (status, reason, from, start, end) => {
+    if (savedRef.current) return;
+    savedRef.current = true;
 
     await fetch(CALL_LOG_FUNCTION_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         to: from,
-        status: statusStr,
+        status,
         reason,
-        startedAt: start,
-        endedAt: end,
+        startedAt: start ? new Date(start).toISOString() : null,
+        endedAt: end ? new Date(end).toISOString() : null,
         durationSeconds:
           start && end ? Math.floor((end - start) / 1000) : 0,
-        orgId: orgIdRef.current, // ✅ ALWAYS PRESENT
+        orgId: orgIdRef.current,
       }),
     });
   };
 
-  /* ---------- INIT DEVICE ---------- */
+  /* ---------------- INIT DEVICE ---------------- */
   useEffect(() => {
     const init = async () => {
-      await initAudio();
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((t) => t.stop());
 
-      const res = await fetch(`${TOKEN_URL}?identity=agent`);
-      const { token } = await res.json();
+        audioRef.current = new Audio();
+        audioRef.current.autoplay = true;
 
-      const device = new Device(token, {
-        enableRingingState: true,
-        closeProtection: true,
-      });
+        const res = await fetch(`${TOKEN_URL}?identity=agent`);
+        const { token } = await res.json();
 
-      deviceRef.current = device;
-      device.audio.incoming(audioRef.current);
-
-      device.on("incoming", (call) => {
-        hasSavedRef.current = false;
-        callRef.current = call;
-        setIncoming(true);
-        setStatus("📞 Incoming call");
-
-        call.on("disconnect", () => {
-          stopTimer();
-          saveCallLog(
-            "ended",
-            null,
-            call.parameters.From,
-            startedAtRef.current,
-            Date.now()
-          );
-          setStatus("📴 Call ended");
+        const device = new Device(token, {
+          enableRingingState: true,
+          closeProtection: true,
         });
-      });
 
-      await device.register();
-      setStatus("✅ Ready");
+        deviceRef.current = device;
+        device.audio.incoming(audioRef.current);
+
+        device.on("incoming", (call) => {
+          savedRef.current = false;
+          callRef.current = call;
+          setIncoming(true);
+          setStatus("📞 Incoming call");
+
+          call.on("disconnect", () => {
+            saveCall(
+              "ended",
+              null,
+              call.parameters.From,
+              startedAtRef.current,
+              Date.now()
+            );
+            startedAtRef.current = null;
+            setIncoming(false);
+            setStatus("📴 Call ended");
+          });
+
+          call.on("error", (err) => {
+            saveCall(
+              "failed",
+              err.message,
+              call.parameters.From,
+              startedAtRef.current,
+              Date.now()
+            );
+          });
+        });
+
+        await device.register();
+        setStatus("✅ Ready for inbound calls");
+      } catch (err) {
+        console.error(err);
+        setStatus("❌ Init failed");
+      }
     };
 
     init();
   }, []);
 
+  /* ---------------- ACTIONS ---------------- */
   const acceptCall = () => {
-    callRef.current.accept();
     startedAtRef.current = Date.now();
-    startTimer();
+    callRef.current.accept();
     setIncoming(false);
     setStatus("✅ Connected");
   };
 
   const rejectCall = () => {
-    saveCallLog(
+    saveCall(
       "rejected",
       "Agent rejected",
       callRef.current.parameters.From,
@@ -131,46 +143,54 @@ export default function InboundAgent() {
     setStatus("❌ Rejected");
   };
 
+  /* ---------------- UI ---------------- */
   return (
-    <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ padding: 30, background: "#fff", borderRadius: 12 }}>
-        <h3>Inbound Agent</h3>
-        <p>{status}</p>
+    <div style={styles.container}>
+      <div style={styles.card}>
+        <h2 style={styles.title}>📞 Inbound Agent</h2>
+
+        <div style={styles.status}>{status}</div>
 
         {incoming && (
-          <>
-            <button onClick={acceptCall}>Accept</button>
-            <button onClick={rejectCall}>Reject</button>
-          </>
+          <div style={styles.actions}>
+            <button style={styles.accept} onClick={acceptCall}>
+              Accept
+            </button>
+            <button style={styles.reject} onClick={rejectCall}>
+              Reject
+            </button>
+          </div>
         )}
 
-        {startedAtRef.current && <p>⏱ {duration}s</p>}
+        {startedAtRef.current && (
+          <p style={styles.timer}>⏱ {duration}s</p>
+        )}
       </div>
     </div>
   );
 }
 
-
-/* -------------------- STYLES -------------------- */
+/* ---------------- STYLES ---------------- */
 const styles = {
   container: {
-    height: "100vh",
-    width: "100vw",
+    position: "fixed",
+    inset: 0,
     display: "flex",
-    justifyContent: "center",
     alignItems: "center",
+    justifyContent: "center",
     background: "#f0f2f5",
   },
   card: {
     width: 360,
     padding: 30,
-    borderRadius: 12,
+    borderRadius: 14,
     background: "#fff",
-    boxShadow: "0 6px 20px rgba(0,0,0,.15)",
+    boxShadow: "0 8px 24px rgba(0,0,0,.15)",
     textAlign: "center",
   },
+  title: { marginBottom: 12 },
   status: {
-    padding: 10,
+    padding: 12,
     borderRadius: 8,
     background: "#e0e0e0",
     fontWeight: "bold",
@@ -185,16 +205,22 @@ const styles = {
     background: "#2e7d32",
     color: "#fff",
     padding: "10px 20px",
-    borderRadius: 8,
     border: "none",
+    borderRadius: 8,
+    fontWeight: "bold",
     cursor: "pointer",
   },
   reject: {
     background: "#d32f2f",
     color: "#fff",
     padding: "10px 20px",
-    borderRadius: 8,
     border: "none",
+    borderRadius: 8,
+    fontWeight: "bold",
     cursor: "pointer",
+  },
+  timer: {
+    marginTop: 12,
+    fontWeight: "bold",
   },
 };
