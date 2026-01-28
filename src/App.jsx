@@ -40,25 +40,26 @@ export default function InboundAgent() {
   }, [startedAtRef.current]);
 
   /* ---------------- SAVE CALL ---------------- */
-  const saveCall = async (status, reason, from, start, end) => {
-    if (savedRef.current) return;
-    savedRef.current = true;
+ const saveCall = async (status, reason, from, start, end) => {
+  if (savedRef.current) return;
+  savedRef.current = true;
 
-    await fetch(CALL_LOG_FUNCTION_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        to: from,
-        status,
-        reason,
-        startedAt: start ? new Date(start).toISOString() : null,
-        endedAt: end ? new Date(end).toISOString() : null,
-        durationSeconds:
-          start && end ? Math.floor((end - start) / 1000) : 0,
-        orgId: orgIdRef.current,
-      }),
-    });
-  };
+  await fetch(CALL_LOG_FUNCTION_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      to: from,
+      status,
+      reason,
+      direction: "inbound", // ✅ FORCE inbound
+      startedAt: start ? new Date(start).toISOString() : null,
+      endedAt: end ? new Date(end).toISOString() : null,
+      durationSeconds:
+        start && end ? Math.floor((end - start) / 1000) : 0,
+      orgId: orgIdRef.current,
+    }),
+  });
+};
 
   /* ---------------- INIT DEVICE ---------------- */
   useEffect(() => {
