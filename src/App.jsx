@@ -7,16 +7,14 @@ const TOKEN_URL =
 export default function InboundAgent() {
   const deviceRef = useRef(null);
   const callRef = useRef(null);
-  const [status, setStatus] = useState("Move your mouse to initialize phone...");
+  const [status, setStatus] = useState("Initializing phone...");
   const [incoming, setIncoming] = useState(false);
-  const [initialized, setInitialized] = useState(false); // prevent multiple initializations
+  const [audioReady, setAudioReady] = useState(false);
 
-  const startDevice = async () => {
+  // 1️⃣ Create device immediately
+  const createDevice = async () => {
     try {
-      setStatus("Initializing...");
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      await audioContext.resume(); // ⚡ unlock audio on user gesture
-
+      setStatus("Fetching token...");
       const res = await fetch(`${TOKEN_URL}?identity=agent`);
       const { token } = await res.json();
 
@@ -27,10 +25,6 @@ export default function InboundAgent() {
         console.error("Device error:", err);
         setStatus("❌ Device error: " + err.message);
       });
-
-      setStatus("Registering device...");
-      await device.register();
-      setStatus("✅ Phone ready, waiting for calls...");
 
       device.on("incoming", (call) => {
         callRef.current = call;
@@ -48,11 +42,42 @@ export default function InboundAgent() {
           setStatus("❌ Call error");
         });
       });
+
+      setStatus("✅ Device created, waiting for audio...");
     } catch (err) {
       console.error(err);
-      setStatus("❌ Failed to initialize phone");
+      setStatus("❌ Failed to create device");
     }
   };
+
+  // 2️⃣ Resume AudioContext on first gesture
+  const unlockAudio = async () => {
+    if (!audioReady) {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      await audioContext.resume();
+      setAudioReady(true);
+      setStatus("✅ Phone ready, waiting for calls...");
+
+      // Register the device now that audio is ready
+      if (deviceRef.current) {
+        await deviceRef.current.register();
+      }
+    }
+  };
+
+  useEffect(() => {
+    createDevice();
+
+    // Listen for first user gesture to unlock audio
+    const events = ["click", "touchstart", "keydown", "mousemove"];
+    const gestureHandler = () => unlockAudio();
+
+    events.forEach((e) => window.addEventListener(e, gestureHandler, { once: true }));
+
+    return () => {
+      events.forEach((e) => window.removeEventListener(e, gestureHandler));
+    };
+  }, []);
 
   const acceptCall = () => {
     if (callRef.current) {
@@ -70,26 +95,10 @@ export default function InboundAgent() {
     }
   };
 
-  // ⚡ Initialize on first mouse move
-  useEffect(() => {
-    const handleMouseMove = () => {
-      if (!initialized) {
-        startDevice();
-        setInitialized(true);
-      }
-    };
-    window.addEventListener("mousemove", handleMouseMove);
-
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-    };
-  }, [initialized]);
-
   return (
     <div style={styles.container}>
       <div style={styles.card}>
         <h2 style={styles.title}>📞 Inbound Agent</h2>
-
         <div style={styles.status}>{status}</div>
 
         {incoming && (
@@ -107,7 +116,6 @@ export default function InboundAgent() {
   );
 }
 
-// ---- Styles ----
 const styles = {
   container: {
     height: "100vh",
@@ -130,9 +138,7 @@ const styles = {
     background: "#fff",
     textAlign: "center",
   },
-  title: {
-    marginBottom: 15,
-  },
+  title: { marginBottom: 15 },
   status: {
     padding: 10,
     borderRadius: 8,
