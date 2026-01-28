@@ -7,31 +7,19 @@ const TOKEN_URL =
 export default function InboundAgent() {
   const deviceRef = useRef(null);
   const callRef = useRef(null);
-
-  const [status, setStatus] = useState("Initializing...");
+  const [status, setStatus] = useState("Click Start Phone to initialize");
   const [incoming, setIncoming] = useState(false);
-  const [audioBlocked, setAudioBlocked] = useState(false);
 
   const startDevice = async () => {
     try {
-      setStatus("Initializing phone...");
-
-      // 🔊 Audio context (may fail without user gesture)
-      const audioContext =
-        new (window.AudioContext || window.webkitAudioContext)();
-
-      if (audioContext.state !== "running") {
-        await audioContext.resume();
-      }
+      setStatus("Initializing...");
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      await audioContext.resume();
 
       const res = await fetch(`${TOKEN_URL}?identity=agent`);
       const { token } = await res.json();
 
-      const device = new Device(token, {
-        enableRingingState: true,
-        closeProtection: true,
-      });
-
+      const device = new Device(token, { enableRingingState: true, closeProtection: true });
       deviceRef.current = device;
 
       device.on("error", (err) => {
@@ -41,8 +29,7 @@ export default function InboundAgent() {
 
       setStatus("Registering device...");
       await device.register();
-
-      setStatus("✅ Phone ready");
+      setStatus("✅ Device ready");
 
       device.on("incoming", (call) => {
         callRef.current = call;
@@ -54,33 +41,32 @@ export default function InboundAgent() {
           setStatus("📴 Call ended");
         });
 
-        call.on("error", () => {
+        call.on("error", (err) => {
           setIncoming(false);
+          console.error("Call error:", err);
           setStatus("❌ Call error");
         });
       });
     } catch (err) {
       console.error(err);
-      setAudioBlocked(true);
-      setStatus("🔊 Tap to enable audio");
+      setStatus("❌ Failed to initialize device");
     }
   };
 
-  // 🚀 AUTO-START ON PAGE LOAD
-  useEffect(() => {
-    startDevice();
-  }, []);
-
   const acceptCall = () => {
-    callRef.current?.accept();
-    setIncoming(false);
-    setStatus("✅ Call connected");
+    if (callRef.current) {
+      callRef.current.accept();
+      setIncoming(false);
+      setStatus("✅ Call connected");
+    }
   };
 
   const rejectCall = () => {
-    callRef.current?.reject();
-    setIncoming(false);
-    setStatus("❌ Call rejected");
+    if (callRef.current) {
+      callRef.current.reject();
+      setIncoming(false);
+      setStatus("❌ Call rejected");
+    }
   };
 
   return (
@@ -90,12 +76,9 @@ export default function InboundAgent() {
 
         <div style={styles.status}>{status}</div>
 
-        {/* 🔊 Audio permission fallback */}
-        {audioBlocked && (
-          <button style={styles.startButton} onClick={startDevice}>
-            Enable Audio
-          </button>
-        )}
+        <button style={styles.startButton} onClick={startDevice}>
+          Start Phone
+        </button>
 
         {incoming && (
           <div style={styles.incomingContainer}>
@@ -111,3 +94,75 @@ export default function InboundAgent() {
     </div>
   );
 }
+
+// ---- Styles ----
+const styles = {
+  container: {
+    height: "100vh",
+    width: "100vw",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    background: "#f0f2f5",
+  },
+  card: {
+    width: 350,
+    minHeight: 250,
+    padding: 30,
+    borderRadius: 12,
+    boxShadow: "0 6px 20px rgba(0,0,0,0.15)",
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "center", // ⚡ Vertically center all content
+    alignItems: "center",     // ⚡ Horizontally center all content
+    background: "#fff",
+    textAlign: "center",
+  },
+  title: {
+    marginBottom: 15,
+  },
+  status: {
+    padding: 10,
+    borderRadius: 8,
+    background: "#e0e0e0",
+    fontWeight: "bold",
+    textAlign: "center",
+    width: "100%",
+    marginBottom: 15,
+  },
+  startButton: {
+    background: "#1976d2",
+    color: "#fff",
+    padding: "10px 20px",
+    border: "none",
+    borderRadius: 8,
+    cursor: "pointer",
+    fontWeight: "bold",
+    marginBottom: 15,
+  },
+  incomingContainer: {
+    display: "flex",
+    justifyContent: "center",
+    gap: "15px",
+    marginTop: 10,
+    flexWrap: "wrap",
+  },
+  acceptButton: {
+    background: "#2e7d32",
+    color: "#fff",
+    padding: "10px 20px",
+    border: "none",
+    borderRadius: 8,
+    cursor: "pointer",
+    fontWeight: "bold",
+  },
+  rejectButton: {
+    background: "#d32f2f",
+    color: "#fff",
+    padding: "10px 20px",
+    border: "none",
+    borderRadius: 8,
+    cursor: "pointer",
+    fontWeight: "bold",
+  },
+};
