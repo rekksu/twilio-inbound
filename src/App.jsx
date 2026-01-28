@@ -12,20 +12,21 @@ export default function InboundAgent() {
   const audioRef = useRef(null);
   const timerRef = useRef(null);
   const startedAtRef = useRef(null);
-  const hasSavedRef = useRef(false); // 🔐 prevent double save
+  const hasSavedRef = useRef(false);
+  const orgIdRef = useRef(null); // ✅ FIX
 
-  const [status, setStatus] = useState("Initializing phone…");
+  const [status, setStatus] = useState("Initializing…");
   const [incoming, setIncoming] = useState(false);
-  const [callDuration, setCallDuration] = useState(0);
-  const [orgId, setOrgId] = useState(null);
+  const [duration, setDuration] = useState(0);
 
-  /* -------------------- URL FIX -------------------- */
+  /* ---------- READ ORG ID ---------- */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setOrgId(params.get("orgId")); // ✅ read once
+    orgIdRef.current = params.get("orgId");
+    console.log("ORG ID:", orgIdRef.current);
   }, []);
 
-  /* -------------------- MIC + AUDIO -------------------- */
+  /* ---------- AUDIO ---------- */
   const initAudio = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     stream.getTracks().forEach((t) => t.stop());
@@ -35,25 +36,21 @@ export default function InboundAgent() {
     audioRef.current = audio;
   };
 
-  /* -------------------- TIMER -------------------- */
+  /* ---------- TIMER ---------- */
   const startTimer = () => {
     timerRef.current = setInterval(() => {
-      setCallDuration(Math.floor((Date.now() - startedAtRef.current) / 1000));
+      setDuration(Math.floor((Date.now() - startedAtRef.current) / 1000));
     }, 1000);
   };
 
   const stopTimer = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = null;
+    clearInterval(timerRef.current);
   };
 
-  /* -------------------- SAVE CALL (SINGLE) -------------------- */
+  /* ---------- SAVE CALL ---------- */
   const saveCallLog = async (statusStr, reason, from, start, end) => {
-    if (hasSavedRef.current) return; // ⛔ prevent duplicates
+    if (hasSavedRef.current) return;
     hasSavedRef.current = true;
-
-    const duration =
-      start && end ? Math.floor((end - start) / 1000) : 0;
 
     await fetch(CALL_LOG_FUNCTION_URL, {
       method: "POST",
@@ -64,13 +61,14 @@ export default function InboundAgent() {
         reason,
         startedAt: start,
         endedAt: end,
-        durationSeconds: duration,
-        orgId,
+        durationSeconds:
+          start && end ? Math.floor((end - start) / 1000) : 0,
+        orgId: orgIdRef.current, // ✅ ALWAYS PRESENT
       }),
     });
   };
 
-  /* -------------------- INIT DEVICE -------------------- */
+  /* ---------- INIT DEVICE ---------- */
   useEffect(() => {
     const init = async () => {
       await initAudio();
@@ -86,16 +84,11 @@ export default function InboundAgent() {
       deviceRef.current = device;
       device.audio.incoming(audioRef.current);
 
-      device.on("error", (e) => {
-        console.error(e);
-        setStatus("❌ Device error");
-      });
-
       device.on("incoming", (call) => {
-        hasSavedRef.current = false; // 🔄 reset per call
+        hasSavedRef.current = false;
         callRef.current = call;
         setIncoming(true);
-        setStatus(`📞 Incoming call`);
+        setStatus("📞 Incoming call");
 
         call.on("disconnect", () => {
           stopTimer();
@@ -106,25 +99,17 @@ export default function InboundAgent() {
             startedAtRef.current,
             Date.now()
           );
-          setIncoming(false);
           setStatus("📴 Call ended");
-        });
-
-        call.on("error", () => {
-          stopTimer();
-          setIncoming(false);
-          setStatus("❌ Call error");
         });
       });
 
       await device.register();
-      setStatus("✅ Ready – waiting for calls");
+      setStatus("✅ Ready");
     };
 
     init();
   }, []);
 
-  /* -------------------- ACTIONS -------------------- */
   const acceptCall = () => {
     callRef.current.accept();
     startedAtRef.current = Date.now();
@@ -143,34 +128,28 @@ export default function InboundAgent() {
     );
     callRef.current.reject();
     setIncoming(false);
-    setStatus("❌ Call rejected");
+    setStatus("❌ Rejected");
   };
 
-  /* -------------------- UI -------------------- */
   return (
-    <div style={styles.container}>
-      <div style={styles.card}>
-        <h2>📞 Inbound Agent</h2>
-        <div style={styles.status}>{status}</div>
+    <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ padding: 30, background: "#fff", borderRadius: 12 }}>
+        <h3>Inbound Agent</h3>
+        <p>{status}</p>
 
         {incoming && (
-          <div style={styles.actions}>
-            <button style={styles.accept} onClick={acceptCall}>
-              Accept
-            </button>
-            <button style={styles.reject} onClick={rejectCall}>
-              Reject
-            </button>
-          </div>
+          <>
+            <button onClick={acceptCall}>Accept</button>
+            <button onClick={rejectCall}>Reject</button>
+          </>
         )}
 
-        {startedAtRef.current && (
-          <p style={{ fontWeight: "bold" }}>⏱ {callDuration}s</p>
-        )}
+        {startedAtRef.current && <p>⏱ {duration}s</p>}
       </div>
     </div>
   );
 }
+
 
 /* -------------------- STYLES -------------------- */
 const styles = {
