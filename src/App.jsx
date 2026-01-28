@@ -26,6 +26,14 @@ export default function InboundAgent() {
     console.log("ORG ID:", orgIdRef.current);
   }, []);
 
+  /* ---------------- MUTED AUTOPLAY HACK ---------------- */
+  useEffect(() => {
+    // Play a silent muted audio to allow autoplay for Twilio ringing
+    const silentAudio = new Audio();
+    silentAudio.muted = true;
+    silentAudio.play().catch(() => {});
+  }, []);
+
   /* ---------------- TIMER ---------------- */
   useEffect(() => {
     let timer;
@@ -52,8 +60,7 @@ export default function InboundAgent() {
         direction: "inbound",
         startedAt: start ? new Date(start).toISOString() : null,
         endedAt: end ? new Date(end).toISOString() : null,
-        durationSeconds:
-          start && end ? Math.floor((end - start) / 1000) : 0,
+        durationSeconds: start && end ? Math.floor((end - start) / 1000) : 0,
         orgId: orgIdRef.current,
       }),
     });
@@ -63,30 +70,24 @@ export default function InboundAgent() {
   useEffect(() => {
     const init = async () => {
       try {
-        // Request mic first
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach((t) => t.stop());
 
-        // Create Audio element BEFORE device creation
         const audioEl = new Audio();
         audioEl.autoplay = true;
         audioRef.current = audioEl;
 
-        // Fetch Twilio token
         const res = await fetch(`${TOKEN_URL}?identity=agent`);
         const { token } = await res.json();
 
-        // Create device
         const device = new Device(token, {
           enableRingingState: true,
           closeProtection: true,
         });
-        deviceRef.current = device;
 
-        // Attach audio BEFORE registering device
+        deviceRef.current = device;
         device.audio.incoming(audioRef.current);
 
-        // Device event listeners
         device.on("incoming", (call) => {
           savedRef.current = false;
           callRef.current = call;
@@ -117,12 +118,6 @@ export default function InboundAgent() {
           });
         });
 
-        device.on("error", (err) => {
-          console.error(err);
-          setStatus("❌ Init failed: " + err.message);
-        });
-
-        // Register device
         await device.register();
         setStatus("✅ Ready for inbound calls");
       } catch (err) {
@@ -174,9 +169,7 @@ export default function InboundAgent() {
           </div>
         )}
 
-        {startedAtRef.current && (
-          <p style={styles.timer}>⏱ {duration}s</p>
-        )}
+        {startedAtRef.current && <p style={styles.timer}>⏱ {duration}s</p>}
       </div>
     </div>
   );
