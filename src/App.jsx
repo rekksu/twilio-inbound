@@ -16,8 +16,9 @@ export default function InboundAgent() {
 
   const [status, setStatus] = useState("Initializing…");
   const [incoming, setIncoming] = useState(false);
+  const [inCall, setInCall] = useState(false);
   const [duration, setDuration] = useState(0);
-  const [audioEnabled, setAudioEnabled] = useState(false); // <-- new state
+  const [audioEnabled, setAudioEnabled] = useState(false);
 
   /* ---------------- ORG ID ---------------- */
   useEffect(() => {
@@ -28,13 +29,13 @@ export default function InboundAgent() {
   /* ---------------- TIMER ---------------- */
   useEffect(() => {
     let timer;
-    if (startedAtRef.current) {
+    if (inCall && startedAtRef.current) {
       timer = setInterval(() => {
         setDuration(Math.floor((Date.now() - startedAtRef.current) / 1000));
       }, 1000);
     }
     return () => clearInterval(timer);
-  }, [startedAtRef.current]);
+  }, [inCall]);
 
   /* ---------------- SAVE CALL ---------------- */
   const saveCall = async (status, reason, from, start, end) => {
@@ -93,8 +94,9 @@ export default function InboundAgent() {
             Date.now()
           );
           startedAtRef.current = null;
+          setInCall(false);
           setIncoming(false);
-          setStatus("📴 Call ended");
+          setStatus("✅ Ready for inbound calls");
         });
 
         call.on("error", (err) => {
@@ -105,6 +107,9 @@ export default function InboundAgent() {
             startedAtRef.current,
             Date.now()
           );
+          setInCall(false);
+          setIncoming(false);
+          setStatus("✅ Ready for inbound calls");
         });
       });
 
@@ -118,13 +123,16 @@ export default function InboundAgent() {
 
   /* ---------------- ACTIONS ---------------- */
   const acceptCall = () => {
+    if (!callRef.current) return;
     startedAtRef.current = Date.now();
     callRef.current.accept();
     setIncoming(false);
+    setInCall(true);
     setStatus("✅ Connected");
   };
 
   const rejectCall = () => {
+    if (!callRef.current) return;
     saveCall(
       "rejected",
       "Agent rejected",
@@ -134,7 +142,14 @@ export default function InboundAgent() {
     );
     callRef.current.reject();
     setIncoming(false);
-    setStatus("❌ Rejected");
+    setStatus("✅ Ready for inbound calls");
+  };
+
+  const hangupCall = () => {
+    if (!callRef.current) return;
+    callRef.current.disconnect();
+    setInCall(false);
+    setStatus("✅ Ready for inbound calls");
   };
 
   const enableAudio = () => {
@@ -172,9 +187,15 @@ export default function InboundAgent() {
           </div>
         )}
 
-        {startedAtRef.current && (
-          <p style={styles.timer}>⏱ {duration}s</p>
+        {inCall && (
+          <div style={styles.actions}>
+            <button style={styles.reject} onClick={hangupCall}>
+              Hang Up
+            </button>
+          </div>
         )}
+
+        {inCall && <p style={styles.timer}>⏱ {duration}s</p>}
       </div>
     </div>
   );
