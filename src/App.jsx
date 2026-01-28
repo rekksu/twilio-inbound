@@ -12,171 +12,167 @@ export default function InboundAgent() {
   const audioRef = useRef(null);
   const timerRef = useRef(null);
   const startedAtRef = useRef(null);
+  const hasSavedRef = useRef(false); // 🔐 prevent double save
 
-  const [status, setStatus] = useState("Requesting microphone...");
+  const [status, setStatus] = useState("Initializing phone…");
   const [incoming, setIncoming] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
+  const [orgId, setOrgId] = useState(null);
 
-  // ---- Request microphone and create audio element ----
+  /* -------------------- URL FIX -------------------- */
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setOrgId(params.get("orgId")); // ✅ read once
+  }, []);
+
+  /* -------------------- MIC + AUDIO -------------------- */
   const initAudio = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((t) => t.stop());
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((t) => t.stop());
 
-      const audioEl = new Audio();
-      audioEl.autoplay = true;
-      audioRef.current = audioEl;
-
-      setStatus("✅ Microphone ready");
-      return true;
-    } catch (err) {
-      console.error(err);
-      setStatus("❌ Microphone permission denied");
-      return false;
-    }
+    const audio = new Audio();
+    audio.autoplay = true;
+    audioRef.current = audio;
   };
 
-  // ---- Save call log to Cloud Function ----
-  const saveCallLog = async (statusStr, reason, callerNumber, duration, start, end) => {
-    try {
-      await fetch(CALL_LOG_FUNCTION_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: callerNumber,         // Must be 'to' for your cloud function
-          status: statusStr,
-          reason: reason || null,
-          startedAt: start,
-          endedAt: end,
-          durationSeconds: duration || 0,
-          customerId: null,
-          orgId: null,
-        }),
-      });
-    } catch (err) {
-      console.error("Failed to save call log:", err);
-    }
-  };
-
-  // ---- Live call timer ----
-  const startLiveTimer = () => {
+  /* -------------------- TIMER -------------------- */
+  const startTimer = () => {
     timerRef.current = setInterval(() => {
-      const now = Date.now();
-      setCallDuration(Math.floor((now - startedAtRef.current) / 1000));
+      setCallDuration(Math.floor((Date.now() - startedAtRef.current) / 1000));
     }, 1000);
   };
 
-  const stopLiveTimer = () => {
+  const stopTimer = () => {
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = null;
   };
 
-  // ---- Initialize Twilio Device ----
-  const initDevice = async () => {
-    const micOk = await initAudio();
-    if (!micOk) return;
+  /* -------------------- SAVE CALL (SINGLE) -------------------- */
+  const saveCallLog = async (statusStr, reason, from, start, end) => {
+    if (hasSavedRef.current) return; // ⛔ prevent duplicates
+    hasSavedRef.current = true;
 
-    try {
-      setStatus("Fetching Twilio token...");
+    const duration =
+      start && end ? Math.floor((end - start) / 1000) : 0;
+
+    await fetch(CALL_LOG_FUNCTION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: from,
+        status: statusStr,
+        reason,
+        startedAt: start,
+        endedAt: end,
+        durationSeconds: duration,
+        orgId,
+      }),
+    });
+  };
+
+  /* -------------------- INIT DEVICE -------------------- */
+  useEffect(() => {
+    const init = async () => {
+      await initAudio();
+
       const res = await fetch(`${TOKEN_URL}?identity=agent`);
       const { token } = await res.json();
 
-      const device = new Device(token, { enableRingingState: true, closeProtection: true });
+      const device = new Device(token, {
+        enableRingingState: true,
+        closeProtection: true,
+      });
+
       deviceRef.current = device;
+      device.audio.incoming(audioRef.current);
 
-      // Attach audio element for incoming call
-      if (audioRef.current) {
-        device.audio.incoming(audioRef.current);
-      }
-
-      device.on("error", (err) => {
-        console.error("Device error:", err);
-        setStatus("❌ Device error: " + err.message);
+      device.on("error", (e) => {
+        console.error(e);
+        setStatus("❌ Device error");
       });
 
       device.on("incoming", (call) => {
+        hasSavedRef.current = false; // 🔄 reset per call
         callRef.current = call;
         setIncoming(true);
-        setStatus(`📞 Incoming call from ${call.parameters.From}`);
+        setStatus(`📞 Incoming call`);
 
         call.on("disconnect", () => {
-          stopLiveTimer();
-          const end = Date.now();
-          const dur = startedAtRef.current ? Math.floor((end - startedAtRef.current) / 1000) : 0;
-
-          saveCallLog("ended", null, call.parameters.From, dur, startedAtRef.current, end);
+          stopTimer();
+          saveCallLog(
+            "ended",
+            null,
+            call.parameters.From,
+            startedAtRef.current,
+            Date.now()
+          );
           setIncoming(false);
           setStatus("📴 Call ended");
         });
 
-        call.on("error", (err) => {
-          stopLiveTimer();
-          console.error("Call error:", err);
+        call.on("error", () => {
+          stopTimer();
           setIncoming(false);
           setStatus("❌ Call error");
         });
       });
 
-      setStatus("✅ Registering device...");
       await device.register();
-      setStatus("✅ Phone ready, waiting for calls...");
-    } catch (err) {
-      console.error(err);
-      setStatus("❌ Failed to initialize phone: " + err.message);
-    }
-  };
+      setStatus("✅ Ready – waiting for calls");
+    };
 
-  useEffect(() => {
-    initDevice(); // Auto initialize device on mount
+    init();
   }, []);
 
-  // ---- Accept / Reject incoming call ----
+  /* -------------------- ACTIONS -------------------- */
   const acceptCall = () => {
-    if (callRef.current) {
-      callRef.current.accept();
-      startedAtRef.current = Date.now();
-      startLiveTimer();
-      setIncoming(false);
-      setStatus("✅ Call connected");
-    }
+    callRef.current.accept();
+    startedAtRef.current = Date.now();
+    startTimer();
+    setIncoming(false);
+    setStatus("✅ Connected");
   };
 
   const rejectCall = () => {
-    if (callRef.current) {
-      callRef.current.reject();
-      setIncoming(false);
-      setStatus("❌ Call rejected");
-    }
+    saveCallLog(
+      "rejected",
+      "Agent rejected",
+      callRef.current.parameters.From,
+      null,
+      Date.now()
+    );
+    callRef.current.reject();
+    setIncoming(false);
+    setStatus("❌ Call rejected");
   };
 
+  /* -------------------- UI -------------------- */
   return (
     <div style={styles.container}>
       <div style={styles.card}>
-        <h2 style={styles.title}>📞 Inbound Agent</h2>
+        <h2>📞 Inbound Agent</h2>
         <div style={styles.status}>{status}</div>
 
         {incoming && (
-          <div style={styles.incomingContainer}>
-            <button style={styles.acceptButton} onClick={acceptCall}>
+          <div style={styles.actions}>
+            <button style={styles.accept} onClick={acceptCall}>
               Accept
             </button>
-            <button style={styles.rejectButton} onClick={rejectCall}>
+            <button style={styles.reject} onClick={rejectCall}>
               Reject
             </button>
           </div>
         )}
 
         {startedAtRef.current && (
-          <p style={{ marginTop: 10, fontWeight: "bold" }}>
-            ⏱ Duration: {callDuration}s
-          </p>
+          <p style={{ fontWeight: "bold" }}>⏱ {callDuration}s</p>
         )}
       </div>
     </div>
   );
 }
 
-// ---- Styles ----
+/* -------------------- STYLES -------------------- */
 const styles = {
   container: {
     height: "100vh",
@@ -187,51 +183,39 @@ const styles = {
     background: "#f0f2f5",
   },
   card: {
-    width: 350,
-    minHeight: 250,
+    width: 360,
     padding: 30,
     borderRadius: 12,
-    boxShadow: "0 6px 20px rgba(0,0,0,0.15)",
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "center",
-    alignItems: "center",
     background: "#fff",
+    boxShadow: "0 6px 20px rgba(0,0,0,.15)",
     textAlign: "center",
   },
-  title: { marginBottom: 15 },
   status: {
     padding: 10,
     borderRadius: 8,
     background: "#e0e0e0",
     fontWeight: "bold",
-    textAlign: "center",
-    width: "100%",
     marginBottom: 15,
   },
-  incomingContainer: {
+  actions: {
     display: "flex",
     justifyContent: "center",
-    gap: "15px",
-    marginTop: 10,
-    flexWrap: "wrap",
+    gap: 15,
   },
-  acceptButton: {
+  accept: {
     background: "#2e7d32",
     color: "#fff",
     padding: "10px 20px",
-    border: "none",
     borderRadius: 8,
+    border: "none",
     cursor: "pointer",
-    fontWeight: "bold",
   },
-  rejectButton: {
+  reject: {
     background: "#d32f2f",
     color: "#fff",
     padding: "10px 20px",
-    border: "none",
     borderRadius: 8,
+    border: "none",
     cursor: "pointer",
-    fontWeight: "bold",
   },
 };
