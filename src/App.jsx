@@ -3,26 +3,21 @@ import { Device } from "@twilio/voice-sdk";
 
 const TOKEN_URL =
   "https://us-central1-vertexifycx-orbit.cloudfunctions.net/getVoiceToken";
-const CALL_LOG_FUNCTION_URL =
-  "https://us-central1-vertexifycx-orbit.cloudfunctions.net/createCallLog";
 
 export default function InboundAgent() {
   const deviceRef = useRef(null);
   const callRef = useRef(null);
   const audioRef = useRef(null);
-  const timerRef = useRef(null);
-  const startedAtRef = useRef(null);
-
   const [status, setStatus] = useState("Requesting microphone...");
   const [incoming, setIncoming] = useState(false);
-  const [callDuration, setCallDuration] = useState(0);
 
-  // ---- Request microphone and create audio element ----
+  // Request mic and create audio element
   const initAudio = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((t) => t.stop());
 
+      // Create an <audio> element for incoming audio
       const audioEl = new Audio();
       audioEl.autoplay = true;
       audioRef.current = audioEl;
@@ -31,47 +26,11 @@ export default function InboundAgent() {
       return true;
     } catch (err) {
       console.error(err);
-      setStatus("❌ Microphone permission denied");
+      setStatus("❌ Mic permission denied");
       return false;
     }
   };
 
-  // ---- Save call log to Cloud Function ----
-  const saveCallLog = async (statusStr, reason, callerNumber, duration, start, end) => {
-    try {
-      await fetch(CALL_LOG_FUNCTION_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: callerNumber,         // Must be 'to' for your cloud function
-          status: statusStr,
-          reason: reason || null,
-          startedAt: start,
-          endedAt: end,
-          durationSeconds: duration || 0,
-          customerId: null,
-          orgId: null,
-        }),
-      });
-    } catch (err) {
-      console.error("Failed to save call log:", err);
-    }
-  };
-
-  // ---- Live call timer ----
-  const startLiveTimer = () => {
-    timerRef.current = setInterval(() => {
-      const now = Date.now();
-      setCallDuration(Math.floor((now - startedAtRef.current) / 1000));
-    }, 1000);
-  };
-
-  const stopLiveTimer = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = null;
-  };
-
-  // ---- Initialize Twilio Device ----
   const initDevice = async () => {
     const micOk = await initAudio();
     if (!micOk) return;
@@ -84,7 +43,7 @@ export default function InboundAgent() {
       const device = new Device(token, { enableRingingState: true, closeProtection: true });
       deviceRef.current = device;
 
-      // Attach audio element for incoming call
+      // Attach audio for incoming call (includes ringing)
       if (audioRef.current) {
         device.audio.incoming(audioRef.current);
       }
@@ -97,22 +56,16 @@ export default function InboundAgent() {
       device.on("incoming", (call) => {
         callRef.current = call;
         setIncoming(true);
-        setStatus(`📞 Incoming call from ${call.parameters.From}`);
+        setStatus("📞 Incoming call...");
 
         call.on("disconnect", () => {
-          stopLiveTimer();
-          const end = Date.now();
-          const dur = startedAtRef.current ? Math.floor((end - startedAtRef.current) / 1000) : 0;
-
-          saveCallLog("ended", null, call.parameters.From, dur, startedAtRef.current, end);
           setIncoming(false);
           setStatus("📴 Call ended");
         });
 
         call.on("error", (err) => {
-          stopLiveTimer();
-          console.error("Call error:", err);
           setIncoming(false);
+          console.error("Call error:", err);
           setStatus("❌ Call error");
         });
       });
@@ -127,15 +80,12 @@ export default function InboundAgent() {
   };
 
   useEffect(() => {
-    initDevice(); // Auto initialize device on mount
+    initDevice();
   }, []);
 
-  // ---- Accept / Reject incoming call ----
   const acceptCall = () => {
     if (callRef.current) {
       callRef.current.accept();
-      startedAtRef.current = Date.now();
-      startLiveTimer();
       setIncoming(false);
       setStatus("✅ Call connected");
     }
@@ -165,18 +115,11 @@ export default function InboundAgent() {
             </button>
           </div>
         )}
-
-        {startedAtRef.current && (
-          <p style={{ marginTop: 10, fontWeight: "bold" }}>
-            ⏱ Duration: {callDuration}s
-          </p>
-        )}
       </div>
     </div>
   );
 }
 
-// ---- Styles ----
 const styles = {
   container: {
     height: "100vh",
