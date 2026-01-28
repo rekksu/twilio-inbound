@@ -9,13 +9,13 @@ export default function InboundAgent() {
   const callRef = useRef(null);
   const [status, setStatus] = useState("Move your mouse to initialize phone...");
   const [incoming, setIncoming] = useState(false);
-  const [initialized, setInitialized] = useState(false); // to prevent multiple inits
+  const [initialized, setInitialized] = useState(false); // prevent multiple initializations
 
   const startDevice = async () => {
     try {
       setStatus("Initializing...");
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      await audioContext.resume();
+      await audioContext.resume(); // ⚡ unlock audio on user gesture
 
       const res = await fetch(`${TOKEN_URL}?identity=agent`);
       const { token } = await res.json();
