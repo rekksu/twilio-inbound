@@ -23,7 +23,7 @@ export default function InboundAgent() {
   /* ---------------- ORG ID ---------------- */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    orgIdRef.current = params.get("orgId");
+    orgIdRef.current = params.get("orgid");
   }, []);
 
   /* ---------------- TIMER ---------------- */
