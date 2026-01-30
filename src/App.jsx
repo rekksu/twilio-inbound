@@ -20,6 +20,9 @@ export default function InboundAgent() {
   const [duration, setDuration] = useState(0);
   const [audioEnabled, setAudioEnabled] = useState(false);
 
+  const [micMuted, setMicMuted] = useState(false);
+  const [onHold, setOnHold] = useState(false);
+
   /* ---------------- ORG ID ---------------- */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -96,6 +99,8 @@ export default function InboundAgent() {
           startedAtRef.current = null;
           setInCall(false);
           setIncoming(false);
+          setMicMuted(false);
+          setOnHold(false);
           setStatus("✅ Ready for inbound calls");
         });
 
@@ -109,6 +114,8 @@ export default function InboundAgent() {
           );
           setInCall(false);
           setIncoming(false);
+          setMicMuted(false);
+          setOnHold(false);
           setStatus("✅ Ready for inbound calls");
         });
       });
@@ -152,6 +159,30 @@ export default function InboundAgent() {
     setStatus("✅ Ready for inbound calls");
   };
 
+  /* ---------------- MIC ---------------- */
+  const toggleMic = () => {
+    if (!callRef.current) return;
+    const newState = !micMuted;
+    callRef.current.mute(newState);
+    setMicMuted(newState);
+  };
+
+  /* ---------------- HOLD ---------------- */
+  const toggleHold = () => {
+    if (!callRef.current) return;
+
+    const pc = callRef.current._peerConnection;
+    if (!pc) return;
+
+    pc.getSenders().forEach((sender) => {
+      if (sender.track && sender.track.kind === "audio") {
+        sender.track.enabled = onHold;
+      }
+    });
+
+    setOnHold(!onHold);
+  };
+
   const enableAudio = () => {
     setAudioEnabled(true);
     initDevice();
@@ -188,14 +219,24 @@ export default function InboundAgent() {
         )}
 
         {inCall && (
-          <div style={styles.actions}>
-            <button style={styles.reject} onClick={hangupCall}>
-              Hang Up
-            </button>
-          </div>
-        )}
+          <>
+            <div style={styles.actions}>
+              <button style={styles.accept} onClick={toggleMic}>
+                {micMuted ? "Mic On" : "Mic Off"}
+              </button>
 
-        {inCall && <p style={styles.timer}>⏱ {duration}s</p>}
+              <button style={styles.accept} onClick={toggleHold}>
+                {onHold ? "Resume" : "Hold"}
+              </button>
+
+              <button style={styles.reject} onClick={hangupCall}>
+                Hang Up
+              </button>
+            </div>
+
+            <p style={styles.timer}>⏱ {duration}s</p>
+          </>
+        )}
       </div>
     </div>
   );
@@ -231,12 +272,13 @@ const styles = {
   actions: {
     display: "flex",
     justifyContent: "center",
-    gap: 15,
+    gap: 10,
+    flexWrap: "wrap",
   },
   accept: {
     background: "#2e7d32",
     color: "#fff",
-    padding: "10px 20px",
+    padding: "10px 16px",
     border: "none",
     borderRadius: 8,
     fontWeight: "bold",
@@ -245,7 +287,7 @@ const styles = {
   reject: {
     background: "#d32f2f",
     color: "#fff",
-    padding: "10px 20px",
+    padding: "10px 16px",
     border: "none",
     borderRadius: 8,
     fontWeight: "bold",
