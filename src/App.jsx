@@ -19,6 +19,8 @@ export default function InboundAgent() {
   const [inCall, setInCall] = useState(false);
   const [duration, setDuration] = useState(0);
   const [audioEnabled, setAudioEnabled] = useState(false);
+  const [micOn, setMicOn] = useState(true);
+  const [onHold, setOnHold] = useState(false);
 
   /* ---------------- ORG ID ---------------- */
   useEffect(() => {
@@ -97,6 +99,7 @@ export default function InboundAgent() {
           setInCall(false);
           setIncoming(false);
           setStatus("✅ Ready for inbound calls");
+          setOnHold(false);
         });
 
         call.on("error", (err) => {
@@ -110,6 +113,7 @@ export default function InboundAgent() {
           setInCall(false);
           setIncoming(false);
           setStatus("✅ Ready for inbound calls");
+          setOnHold(false);
         });
       });
 
@@ -150,6 +154,32 @@ export default function InboundAgent() {
     callRef.current.disconnect();
     setInCall(false);
     setStatus("✅ Ready for inbound calls");
+    setOnHold(false);
+  };
+
+  /* ---------------- MIC ---------------- */
+  const toggleMic = () => {
+    if (!callRef.current) return;
+    const track = callRef.current.mediaStream
+      ? callRef.current.mediaStream.getAudioTracks()[0]
+      : null;
+    if (!track) return;
+
+    track.enabled = !track.enabled;
+    setMicOn(track.enabled);
+  };
+
+  /* ---------------- HOLD ---------------- */
+  const toggleHold = () => {
+    if (!callRef.current) return;
+    if (!onHold) {
+      callRef.current.mute(true); // mute audio to hold
+      callRef.current.pause(); // pause the call
+    } else {
+      callRef.current.mute(false);
+      callRef.current.resume();
+    }
+    setOnHold(!onHold);
   };
 
   const enableAudio = () => {
@@ -191,6 +221,12 @@ export default function InboundAgent() {
           <div style={styles.actions}>
             <button style={styles.reject} onClick={hangupCall}>
               Hang Up
+            </button>
+            <button style={styles.accept} onClick={toggleMic}>
+              {micOn ? "Mic Off" : "Mic On"}
+            </button>
+            <button style={styles.reject} onClick={toggleHold}>
+              {onHold ? "Resume" : "Hold"}
             </button>
           </div>
         )}
