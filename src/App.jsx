@@ -21,7 +21,6 @@ export default function InboundAgent() {
   const [audioEnabled, setAudioEnabled] = useState(false);
 
   const [micMuted, setMicMuted] = useState(false);
-  const [onHold, setOnHold] = useState(false);
 
   /* ---------------- ORG ID ---------------- */
   useEffect(() => {
@@ -100,7 +99,6 @@ export default function InboundAgent() {
           setInCall(false);
           setIncoming(false);
           setMicMuted(false);
-          setOnHold(false);
           setStatus("✅ Ready for inbound calls");
         });
 
@@ -115,7 +113,6 @@ export default function InboundAgent() {
           setInCall(false);
           setIncoming(false);
           setMicMuted(false);
-          setOnHold(false);
           setStatus("✅ Ready for inbound calls");
         });
       });
@@ -162,25 +159,9 @@ export default function InboundAgent() {
   /* ---------------- MIC ---------------- */
   const toggleMic = () => {
     if (!callRef.current) return;
-    const newState = !micMuted;
-    callRef.current.mute(newState);
-    setMicMuted(newState);
-  };
-
-  /* ---------------- HOLD ---------------- */
-  const toggleHold = () => {
-    if (!callRef.current) return;
-
-    const pc = callRef.current._peerConnection;
-    if (!pc) return;
-
-    pc.getSenders().forEach((sender) => {
-      if (sender.track && sender.track.kind === "audio") {
-        sender.track.enabled = onHold;
-      }
-    });
-
-    setOnHold(!onHold);
+    const next = !micMuted;
+    callRef.current.mute(next);
+    setMicMuted(next);
   };
 
   const enableAudio = () => {
@@ -221,12 +202,11 @@ export default function InboundAgent() {
         {inCall && (
           <>
             <div style={styles.actions}>
-              <button style={styles.accept} onClick={toggleMic}>
-                {micMuted ? "Mic On" : "Mic Off"}
-              </button>
-
-              <button style={styles.accept} onClick={toggleHold}>
-                {onHold ? "Resume" : "Hold"}
+              <button
+                style={micMuted ? styles.micOff : styles.micOn}
+                onClick={toggleMic}
+              >
+                {micMuted ? "Mic Off" : "Mic On"}
               </button>
 
               <button style={styles.reject} onClick={hangupCall}>
@@ -272,7 +252,7 @@ const styles = {
   actions: {
     display: "flex",
     justifyContent: "center",
-    gap: 10,
+    gap: 12,
     flexWrap: "wrap",
   },
   accept: {
@@ -285,6 +265,24 @@ const styles = {
     cursor: "pointer",
   },
   reject: {
+    background: "#d32f2f",
+    color: "#fff",
+    padding: "10px 16px",
+    border: "none",
+    borderRadius: 8,
+    fontWeight: "bold",
+    cursor: "pointer",
+  },
+  micOn: {
+    background: "#2e7d32",
+    color: "#fff",
+    padding: "10px 16px",
+    border: "none",
+    borderRadius: 8,
+    fontWeight: "bold",
+    cursor: "pointer",
+  },
+  micOff: {
     background: "#d32f2f",
     color: "#fff",
     padding: "10px 16px",
