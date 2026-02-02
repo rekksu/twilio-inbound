@@ -5,6 +5,8 @@ const TOKEN_URL =
   "https://us-central1-vertexifycx-orbit.cloudfunctions.net/getVoiceToken";
 const CALL_LOG_FUNCTION_URL =
   "https://us-central1-vertexifycx-orbit.cloudfunctions.net/createCallLog";
+const VERIFY_ACCESS_URL =
+  "https://us-central1-vertexifycx-orbit.cloudfunctions.net/verifyDialerAccess";
 
 export default function InboundAgent() {
   const deviceRef = useRef(null);
@@ -19,49 +21,60 @@ export default function InboundAgent() {
   const [inCall, setInCall] = useState(false);
   const [duration, setDuration] = useState(0);
   const [audioEnabled, setAudioEnabled] = useState(false);
-
   const [micMuted, setMicMuted] = useState(false);
 
-  /* ---------------- ORG ID ---------------- */
+  // 🔐 auth states
+  const [authorized, setAuthorized] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  /* ---------------- VERIFY ACCESS ---------------- */
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    orgIdRef.current = params.get("orgid");
+    const verifyAccess = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const accessKey = params.get("accessKey");
+
+      orgIdRef.current = params.get("orgid");
+
+      if (!accessKey) {
+        setStatus("🚫 Unauthorized access");
+        setAuthChecked(true);
+        return;
+      }
+
+      try {
+        const res = await fetch(VERIFY_ACCESS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key: accessKey }),
+        });
+
+        if (!res.ok) {
+          setStatus("🚫 Access denied");
+          setAuthChecked(true);
+          return;
+        }
+
+        const data = await res.json();
+        orgIdRef.current = data.orgId;
+
+        setAuthorized(true);
+        setAuthChecked(true);
+      } catch (err) {
+        console.error(err);
+        setStatus("🚫 Verification failed");
+        setAuthChecked(true);
+      }
+    };
+
+    verifyAccess();
   }, []);
 
-  /* ---------------- TIMER ---------------- */
-  useEffect(() => {
-    let timer;
-    if (inCall && startedAtRef.current) {
-      timer = setInterval(() => {
-        setDuration(Math.floor((Date.now() - startedAtRef.current) / 1000));
-      }, 1000);
-    }
-    return () => clearInterval(timer);
-  }, [inCall]);
-
-  /* ---------------- SAVE CALL ---------------- */
-  const saveCall = async (status, reason, from, start, end) => {
-    if (savedRef.current) return;
-    savedRef.current = true;
-
-    await fetch(CALL_LOG_FUNCTION_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        to: from,
-        status,
-        reason,
-        direction: "inbound",
-        startedAt: start ? new Date(start).toISOString() : null,
-        endedAt: end ? new Date(end).toISOString() : null,
-        durationSeconds:
-          start && end ? Math.floor((end - start) / 1000) : 0,
-        orgId: orgIdRef.current,
-      }),
-    });
+  /* ---------------- ENABLE AUDIO & INIT DEVICE ---------------- */
+  const enableAudio = () => {
+    setAudioEnabled(true);
+    if (authChecked && authorized) initDevice();
   };
 
-  /* ---------------- INIT DEVICE ---------------- */
   const initDevice = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -125,6 +138,38 @@ export default function InboundAgent() {
     }
   };
 
+  /* ---------------- TIMER ---------------- */
+  useEffect(() => {
+    let timer;
+    if (inCall && startedAtRef.current) {
+      timer = setInterval(() => {
+        setDuration(Math.floor((Date.now() - startedAtRef.current) / 1000));
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [inCall]);
+
+  /* ---------------- SAVE CALL ---------------- */
+  const saveCall = async (status, reason, from, start, end) => {
+    if (savedRef.current) return;
+    savedRef.current = true;
+
+    await fetch(CALL_LOG_FUNCTION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: from,
+        status,
+        reason,
+        direction: "inbound",
+        startedAt: start ? new Date(start).toISOString() : null,
+        endedAt: end ? new Date(end).toISOString() : null,
+        durationSeconds: start && end ? Math.floor((end - start) / 1000) : 0,
+        orgId: orgIdRef.current,
+      }),
+    });
+  };
+
   /* ---------------- ACTIONS ---------------- */
   const acceptCall = () => {
     if (!callRef.current) return;
@@ -156,7 +201,6 @@ export default function InboundAgent() {
     setStatus("✅ Ready for inbound calls");
   };
 
-  /* ---------------- MIC ---------------- */
   const toggleMic = () => {
     if (!callRef.current) return;
     const next = !micMuted;
@@ -164,12 +208,23 @@ export default function InboundAgent() {
     setMicMuted(next);
   };
 
-  const enableAudio = () => {
-    setAudioEnabled(true);
-    initDevice();
-  };
-
   /* ---------------- UI ---------------- */
+  if (!authChecked) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.card}>🔐 Verifying access…</div>
+      </div>
+    );
+  }
+
+  if (!authorized) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.card}>🚫 Unauthorized</div>
+      </div>
+    );
+  }
+
   return (
     <div style={styles.container}>
       {!audioEnabled && (
@@ -222,7 +277,7 @@ export default function InboundAgent() {
   );
 }
 
-/* ---------------- STYLES ---------------- */
+/* ---------------- STYLES (UNCHANGED) ---------------- */
 const styles = {
   container: {
     position: "fixed",
