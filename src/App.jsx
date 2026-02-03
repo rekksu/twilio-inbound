@@ -155,30 +155,43 @@ export default function App() {
       });
 
       call.on("disconnect", () => {
-        stopTimer();
-        const end = Date.now();
-        const dur = startedAtRef.current
-          ? Math.floor((end - startedAtRef.current) / 1000)
-          : 0;
+  stopTimer();
+  const end = Date.now();
+  const dur = startedAtRef.current
+    ? Math.floor((end - startedAtRef.current) / 1000)
+    : 0;
 
-        saveCallLog("ended", null, dur, startedAtRef.current, end, to);
-        setIsHangupEnabled(false);
-        setMicMuted(false);
-        setStatus("📴 Call ended");
-      });
+  saveCallLog("ended", null, dur, startedAtRef.current, end, to);
 
-      call.on("error", (err) => {
-        stopTimer();
-        const end = Date.now();
-        const dur = startedAtRef.current
-          ? Math.floor((end - startedAtRef.current) / 1000)
-          : 0;
+  setIsHangupEnabled(false);
+  setMicMuted(false);
+  setStatus("📴 Call ended");
 
-        saveCallLog("failed", err.message, dur, startedAtRef.current, end, to);
-        setIsHangupEnabled(false);
-        setMicMuted(false);
-        setStatus("❌ Call failed");
-      });
+  // ✅ Close tab after call ends
+  setTimeout(() => {
+    window.close();
+  }, 500); // small delay to ensure state updates
+});
+
+call.on("error", (err) => {
+  stopTimer();
+  const end = Date.now();
+  const dur = startedAtRef.current
+    ? Math.floor((end - startedAtRef.current) / 1000)
+    : 0;
+
+  saveCallLog("failed", err.message, dur, startedAtRef.current, end, to);
+
+  setIsHangupEnabled(false);
+  setMicMuted(false);
+  setStatus("❌ Call failed");
+
+  // ✅ Close tab on error as well
+  setTimeout(() => {
+    window.close();
+  }, 500);
+});
+
     };
 
     initCall();
