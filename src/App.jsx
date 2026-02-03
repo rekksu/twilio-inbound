@@ -1,39 +1,84 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Device } from "@twilio/voice-sdk";
 
-const TOKEN_URL =
+const CLOUD_FUNCTION_URL =
   "https://us-central1-vertexifycx-orbit.cloudfunctions.net/getVoiceToken";
 const CALL_LOG_FUNCTION_URL =
   "https://us-central1-vertexifycx-orbit.cloudfunctions.net/createCallLog";
 const VERIFY_ACCESS_URL =
   "https://us-central1-vertexifycx-orbit.cloudfunctions.net/verifyDialerAccess";
 
-export default function InboundAgent() {
-  const deviceRef = useRef(null);
-  const callRef = useRef(null);
-  const audioRef = useRef(null);
-  const startedAtRef = useRef(null);
-  const savedRef = useRef(false);
-  const orgIdRef = useRef(null);
-
-  const [status, setStatus] = useState("Initializing…");
-  const [incoming, setIncoming] = useState(false);
-  const [inCall, setInCall] = useState(false);
-  const [duration, setDuration] = useState(0);
-  const [audioEnabled, setAudioEnabled] = useState(false);
+export default function App() {
+  const [status, setStatus] = useState("Initializing...");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [isHangupEnabled, setIsHangupEnabled] = useState(false);
+  const [callDuration, setCallDuration] = useState(0);
   const [micMuted, setMicMuted] = useState(false);
 
   // 🔐 auth states
   const [authorized, setAuthorized] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
 
-  /* ---------------- VERIFY ACCESS ---------------- */
+  const deviceRef = useRef(null);
+  const callRef = useRef(null);
+  const timerRef = useRef(null);
+  const startedAtRef = useRef(null);
+
+  // ✅ refs
+  const customerIdRef = useRef(null);
+  const orgIdRef = useRef(null);
+  const hasSavedRef = useRef(false);
+
+  const formatPhoneNumber = (num) => {
+    let cleaned = num.replace(/[\s\-\(\)]/g, "");
+    if (!cleaned.startsWith("+")) cleaned = "+" + cleaned;
+    return cleaned;
+  };
+
+  const saveCallLog = async (statusStr, reason, duration, start, end, to) => {
+    if (!to || !statusStr || hasSavedRef.current) return;
+    hasSavedRef.current = true;
+
+    await fetch(CALL_LOG_FUNCTION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: formatPhoneNumber(to),
+        status: statusStr,
+        reason,
+        customerId: customerIdRef.current,
+        orgId: orgIdRef.current,
+        startedAt: start ? new Date(start).toISOString() : null,
+        endedAt: end ? new Date(end).toISOString() : null,
+        durationSeconds: duration,
+      }),
+    });
+  };
+
+  const startTimer = () => {
+    timerRef.current = setInterval(() => {
+      setCallDuration(
+        Math.floor((Date.now() - startedAtRef.current) / 1000)
+      );
+    }, 1000);
+  };
+
+  const stopTimer = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+  };
+
+  /* =========================
+     🔐 VERIFY ACCESS FIRST
+     ========================= */
   useEffect(() => {
     const verifyAccess = async () => {
       const params = new URLSearchParams(window.location.search);
       const accessKey = params.get("accessKey");
 
-      orgIdRef.current = params.get("orgid");
+      const to = params.get("to");
+      customerIdRef.current = params.get("customerId");
+
+      setPhoneNumber(to || "");
 
       if (!accessKey) {
         setStatus("🚫 Unauthorized access");
@@ -69,136 +114,79 @@ export default function InboundAgent() {
     verifyAccess();
   }, []);
 
-  /* ---------------- ENABLE AUDIO & INIT DEVICE ---------------- */
-  const enableAudio = () => {
-    setAudioEnabled(true);
-    if (authChecked && authorized) initDevice();
-  };
-
-  const initDevice = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((t) => t.stop());
-
-      audioRef.current = new Audio();
-      audioRef.current.autoplay = true;
-
-      const res = await fetch(`${TOKEN_URL}?identity=agent`);
-      const { token } = await res.json();
-
-      const device = new Device(token, {
-        enableRingingState: true,
-        closeProtection: true,
-      });
-
-      deviceRef.current = device;
-      device.audio.incoming(audioRef.current);
-
-      device.on("incoming", (call) => {
-        savedRef.current = false;
-        callRef.current = call;
-        setIncoming(true);
-        setStatus("📞 Incoming call");
-
-        call.on("disconnect", () => {
-          saveCall(
-            "ended",
-            null,
-            call.parameters.From,
-            startedAtRef.current,
-            Date.now()
-          );
-          startedAtRef.current = null;
-          setInCall(false);
-          setIncoming(false);
-          setMicMuted(false);
-          setStatus("✅ Ready for inbound calls");
-        });
-
-        call.on("error", (err) => {
-          saveCall(
-            "failed",
-            err.message,
-            call.parameters.From,
-            startedAtRef.current,
-            Date.now()
-          );
-          setInCall(false);
-          setIncoming(false);
-          setMicMuted(false);
-          setStatus("✅ Ready for inbound calls");
-        });
-      });
-
-      await device.register();
-      setStatus("✅ Ready for inbound calls");
-    } catch (err) {
-      console.error(err);
-      setStatus("❌ Init failed");
-    }
-  };
-
-  /* ---------------- TIMER ---------------- */
+  /* =========================
+     📞 INIT CALL (ONLY IF AUTH)
+     ========================= */
   useEffect(() => {
-    let timer;
-    if (inCall && startedAtRef.current) {
-      timer = setInterval(() => {
-        setDuration(Math.floor((Date.now() - startedAtRef.current) / 1000));
-      }, 1000);
+    if (!authChecked || !authorized) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const to = params.get("to");
+
+    if (!to) {
+      setStatus("❌ Missing phone number");
+      return;
     }
-    return () => clearInterval(timer);
-  }, [inCall]);
 
-  /* ---------------- SAVE CALL ---------------- */
-  const saveCall = async (status, reason, from, start, end) => {
-    if (savedRef.current) return;
-    savedRef.current = true;
+    const initCall = async () => {
+      setStatus("Fetching token...");
 
-    await fetch(CALL_LOG_FUNCTION_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        to: from,
-        status,
-        reason,
-        direction: "inbound",
-        startedAt: start ? new Date(start).toISOString() : null,
-        endedAt: end ? new Date(end).toISOString() : null,
-        durationSeconds: start && end ? Math.floor((end - start) / 1000) : 0,
-        orgId: orgIdRef.current,
-      }),
-    });
-  };
+      const tokenRes = await fetch(`${CLOUD_FUNCTION_URL}?identity=agent`);
+      const { token } = await tokenRes.json();
 
-  /* ---------------- ACTIONS ---------------- */
-  const acceptCall = () => {
-    if (!callRef.current) return;
-    startedAtRef.current = Date.now();
-    callRef.current.accept();
-    setIncoming(false);
-    setInCall(true);
-    setStatus("✅ Connected");
-  };
+      const device = new Device(token, { enableRingingState: true });
+      deviceRef.current = device;
 
-  const rejectCall = () => {
-    if (!callRef.current) return;
-    saveCall(
-      "rejected",
-      "Agent rejected",
-      callRef.current.parameters.From,
-      null,
-      Date.now()
-    );
-    callRef.current.reject();
-    setIncoming(false);
-    setStatus("✅ Ready for inbound calls");
-  };
+      setStatus("Dialing...");
 
-  const hangupCall = () => {
-    if (!callRef.current) return;
-    callRef.current.disconnect();
-    setInCall(false);
-    setStatus("✅ Ready for inbound calls");
+      const call = await device.connect({
+        params: { To: formatPhoneNumber(to) },
+      });
+
+      callRef.current = call;
+      setIsHangupEnabled(true);
+
+      call.on("ringing", () => setStatus("📞 Ringing..."));
+
+      call.on("accept", () => {
+        startedAtRef.current = Date.now();
+        startTimer();
+        setStatus("✅ Connected!");
+      });
+
+      call.on("disconnect", () => {
+        stopTimer();
+        const end = Date.now();
+        const dur = startedAtRef.current
+          ? Math.floor((end - startedAtRef.current) / 1000)
+          : 0;
+
+        saveCallLog("ended", null, dur, startedAtRef.current, end, to);
+        setIsHangupEnabled(false);
+        setMicMuted(false);
+        setStatus("📴 Call ended");
+      });
+
+      call.on("error", (err) => {
+        stopTimer();
+        const end = Date.now();
+        const dur = startedAtRef.current
+          ? Math.floor((end - startedAtRef.current) / 1000)
+          : 0;
+
+        saveCallLog("failed", err.message, dur, startedAtRef.current, end, to);
+        setIsHangupEnabled(false);
+        setMicMuted(false);
+        setStatus("❌ Call failed");
+      });
+    };
+
+    initCall();
+  }, [authChecked, authorized]);
+
+  const hangup = () => {
+    callRef.current?.disconnect();
+    setIsHangupEnabled(false);
   };
 
   const toggleMic = () => {
@@ -208,171 +196,114 @@ export default function InboundAgent() {
     setMicMuted(next);
   };
 
-  /* ---------------- UI ---------------- */
-  if (!authChecked) {
-    return (
-      <div style={styles.container}>
-        <div style={styles.card}>🔐 Verifying access…</div>
-      </div>
-    );
-  }
+  /* ---------- UI STYLES (UNCHANGED) ---------- */
+  const containerStyle = {
+    height: "100vh",
+    width: "100vw",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    background: "#f0f2f5",
+  };
 
-  if (!authorized) {
-    return (
-      <div style={styles.container}>
-        <div style={styles.card}>🚫 Unauthorized</div>
-      </div>
-    );
-  }
+  const cardStyle = {
+    width: 400,
+    padding: 30,
+    borderRadius: 12,
+    boxShadow: "0 6px 20px rgba(0,0,0,0.15)",
+    background: "#fff",
+    textAlign: "center",
+    fontFamily: "Segoe UI, sans-serif",
+  };
 
+  const statusStyle = {
+    padding: 12,
+    borderRadius: 8,
+    margin: "15px 0",
+    fontWeight: "bold",
+    background:
+      status.includes("❌") || status.includes("🚫")
+        ? "#ffe5e5"
+        : status.includes("✅")
+        ? "#e5ffe5"
+        : "#e0e0e0",
+  };
+
+  const inputStyle = {
+    padding: 12,
+    width: "90%",
+    borderRadius: 8,
+    border: "1px solid #ccc",
+    fontSize: 16,
+    marginBottom: 15,
+    backgroundColor: "#f0f0f0",
+    color: "#555",
+  };
+
+  const hangupButtonStyle = {
+    padding: "12px 25px",
+    borderRadius: 8,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: "bold",
+    fontSize: 16,
+    background: "#d32f2f",
+    color: "#fff",
+  };
+
+  const micOnStyle = {
+    padding: "12px 20px",
+    borderRadius: 8,
+    border: "none",
+    fontWeight: "bold",
+    background: "#2e7d32",
+    color: "#fff",
+    cursor: "pointer",
+    marginRight: 10,
+  };
+
+  const micOffStyle = {
+    ...micOnStyle,
+    background: "#d32f2f",
+  };
+
+  /* ---------- UI (UNCHANGED) ---------- */
   return (
-    <div style={styles.container}>
-      {!audioEnabled && (
-        <div style={styles.modal}>
-          <div style={styles.modalContent}>
-            <p>🎧 Please enable audio to receive calls</p>
-            <button style={styles.enableButton} onClick={enableAudio}>
-              Enable Audio
-            </button>
-          </div>
-        </div>
-      )}
+    <div style={containerStyle}>
+      <div style={cardStyle}>
+        <h2>📞 CRM Orbit Dialer</h2>
 
-      <div style={styles.card}>
-        <h2 style={styles.title}>📞 Inbound Agent</h2>
+        <div style={statusStyle}>{status}</div>
 
-        <div style={styles.status}>{status}</div>
+        <label style={{ fontWeight: "bold", marginBottom: 8, display: "block" }}>
+          Phone Number:
+        </label>
 
-        {incoming && (
-          <div style={styles.actions}>
-            <button style={styles.accept} onClick={acceptCall}>
-              Accept
-            </button>
-            <button style={styles.reject} onClick={rejectCall}>
-              Reject
-            </button>
-          </div>
+        <input type="text" value={phoneNumber} readOnly style={inputStyle} />
+
+        {isHangupEnabled && (
+          <p style={{ fontWeight: "bold" }}>
+            ⏱ Duration: {callDuration}s
+          </p>
         )}
 
-        {inCall && (
-          <>
-            <div style={styles.actions}>
-              <button
-                style={micMuted ? styles.micOff : styles.micOn}
-                onClick={toggleMic}
-              >
-                {micMuted ? "Mic Off" : "Mic On"}
-              </button>
-
-              <button style={styles.reject} onClick={hangupCall}>
-                Hang Up
-              </button>
-            </div>
-
-            <p style={styles.timer}>⏱ {duration}s</p>
-          </>
+        {isHangupEnabled && (
+          <button
+            style={micMuted ? micOffStyle : micOnStyle}
+            onClick={toggleMic}
+          >
+            {micMuted ? "Mic Off" : "Mic On"}
+          </button>
         )}
+
+        <button
+          style={hangupButtonStyle}
+          onClick={hangup}
+          disabled={!isHangupEnabled}
+        >
+          Hang Up
+        </button>
       </div>
     </div>
   );
 }
-
-/* ---------------- STYLES (UNCHANGED) ---------------- */
-const styles = {
-  container: {
-    position: "fixed",
-    inset: 0,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "#f0f2f5",
-  },
-  card: {
-    width: 360,
-    padding: 30,
-    borderRadius: 14,
-    background: "#fff",
-    boxShadow: "0 8px 24px rgba(0,0,0,.15)",
-    textAlign: "center",
-    zIndex: 1,
-  },
-  title: { marginBottom: 12 },
-  status: {
-    padding: 12,
-    borderRadius: 8,
-    background: "#e0e0e0",
-    fontWeight: "bold",
-    marginBottom: 15,
-  },
-  actions: {
-    display: "flex",
-    justifyContent: "center",
-    gap: 12,
-    flexWrap: "wrap",
-  },
-  accept: {
-    background: "#2e7d32",
-    color: "#fff",
-    padding: "10px 16px",
-    border: "none",
-    borderRadius: 8,
-    fontWeight: "bold",
-    cursor: "pointer",
-  },
-  reject: {
-    background: "#d32f2f",
-    color: "#fff",
-    padding: "10px 16px",
-    border: "none",
-    borderRadius: 8,
-    fontWeight: "bold",
-    cursor: "pointer",
-  },
-  micOn: {
-    background: "#2e7d32",
-    color: "#fff",
-    padding: "10px 16px",
-    border: "none",
-    borderRadius: 8,
-    fontWeight: "bold",
-    cursor: "pointer",
-  },
-  micOff: {
-    background: "#d32f2f",
-    color: "#fff",
-    padding: "10px 16px",
-    border: "none",
-    borderRadius: 8,
-    fontWeight: "bold",
-    cursor: "pointer",
-  },
-  timer: {
-    marginTop: 12,
-    fontWeight: "bold",
-  },
-  modal: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(0,0,0,0.4)",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 10,
-  },
-  modalContent: {
-    background: "#fff",
-    padding: 30,
-    borderRadius: 14,
-    textAlign: "center",
-  },
-  enableButton: {
-    marginTop: 15,
-    padding: "10px 20px",
-    borderRadius: 8,
-    border: "none",
-    fontWeight: "bold",
-    background: "#1976d2",
-    color: "#fff",
-    cursor: "pointer",
-  },
-};
