@@ -36,24 +36,31 @@ export default function App() {
   };
 
   const saveCallLog = async (statusStr, reason, duration, start, end, to) => {
-    if (!to || !statusStr || hasSavedRef.current) return;
-    hasSavedRef.current = true;
+  if (!to || !statusStr || hasSavedRef.current) return;
+  hasSavedRef.current = true;
 
-    await fetch(CALL_LOG_FUNCTION_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        to: formatPhoneNumber(to),
-        status: statusStr,
-        reason,
-        customerId: customerIdRef.current,
-        orgId: orgIdRef.current,
-        startedAt: start ? new Date(start).toISOString() : null,
-        endedAt: end ? new Date(end).toISOString() : null,
-        durationSeconds: duration,
-      }),
-    });
+  const payload = {
+    to: formatPhoneNumber(to),
+    status: statusStr,
+    reason,
+    orgId: orgIdRef.current,
+    startedAt: start ? new Date(start).toISOString() : null,
+    endedAt: end ? new Date(end).toISOString() : null,
+    durationSeconds: duration,
   };
+
+  // ✅ only attach customerId if it exists
+  if (customerIdRef.current) {
+    payload.customerId = customerIdRef.current;
+  }
+
+  await fetch(CALL_LOG_FUNCTION_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+};
+
 
   const startTimer = () => {
     timerRef.current = setInterval(() => {
